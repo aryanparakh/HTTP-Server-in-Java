@@ -22,6 +22,8 @@ public class ClientConnection implements Runnable {
 
     private final Socket clientSocket;
     private final Router router;
+    private static final int MAX_REQUESTS = 100;
+    private static final int TIMEOUT_SECONDS = 30;
 
     public ClientConnection(Socket clientSocket, Router router) {
         this.clientSocket = clientSocket;
@@ -35,46 +37,68 @@ public class ClientConnection implements Runnable {
                 OutputStream socketOutputStream = clientSocket.getOutputStream();
                 PrintWriter socketWriter = new PrintWriter(socketOutputStream, true);) {
 
-            String statusLine = socketReader.readLine();
-            if (statusLine == null || statusLine.isEmpty()) {
-                System.out.println("Closing connection. Reason: no status line found.");
-                return;
-            }
+            clientSocket.setSoTimeout(TIMEOUT_SECONDS * 1000);
 
-            Map<String, String> rawHeaders = new HashMap<>();
-            String headerLine;
-            while ((headerLine = socketReader.readLine()) != null && !headerLine.isEmpty()) {
-                String headerParts[] = headerLine.split(Delimiter.HttpHeaderDelimiter.getDelimiterValue(), 2);
-                if (headerParts.length == 2) {
-                    rawHeaders.put(headerParts[0], headerParts[1]);
+            boolean keepAlive = true;
+            int requestCount = 0;
+
+            while (keepAlive && requestCount < MAX_REQUESTS) {
+                String statusLine = socketReader.readLine();
+                if (statusLine == null || statusLine.isEmpty()) {
+                    System.out.println("Closing connection. Reason: no status line found.");
+                    break;
                 }
+
+                Map<String, String> rawHeaders = new HashMap<>();
+                String headerLine;
+                while ((headerLine = socketReader.readLine()) != null && !headerLine.isEmpty()) {
+                    String headerParts[] = headerLine.split(Delimiter.HttpHeaderDelimiter.getDelimiterValue(), 2);
+                    if (headerParts.length == 2) {
+                        rawHeaders.put(headerParts[0], headerParts[1]);
+                    }
+                }
+
+                HttpResponse httpResponse;
+                try {
+                    // parse the raw http request
+                    HttpRequestParser httpRequestParser = new HttpRequestParser();
+                    HttpRequest httpRequest = httpRequestParser.parse(statusLine, rawHeaders, socketReader);
+
+                    // Debug
+                    System.out.println("Received: " + httpRequest.getVerb() + " " + httpRequest.getResource());
+
+                    // Use custom router to handle requests.
+                    httpResponse = this.router.route(httpRequest);
+
+                    String connectionHeader = httpRequest.getHeaders().get(HttpHeader.Connection);
+                    if ("close".equals(connectionHeader)) {
+                        keepAlive = false;
+                    }
+                } catch (InvalidHttpRequestException e) {
+                    // Debug
+                    System.out.println("400_BAD_REQUEST. Failed to parse HTTP request: " + e.getMessage());
+
+                    // Since parsing is failed, send a 400 BAD REQUEST response.
+                    String responseBody = e.getMessage();
+                    httpResponse = new HttpResponse.Builder(HttpStatus.BAD_REQUEST_400)
+                            .header(HttpHeader.Content_Type, "text/plain")
+                            .header(HttpHeader.Content_Length, Integer.toString(responseBody.length()))
+                            .body(responseBody)
+                            .build();
+                    keepAlive = false;
+                }
+
+                if (keepAlive) {
+                    httpResponse.getHeaders().put(HttpHeader.Connection, "keep-alive");
+                    httpResponse.getHeaders().put(HttpHeader.Keep_Alive,
+                            "timeout=" + TIMEOUT_SECONDS + ", max=" + MAX_REQUESTS);
+                } else {
+                    httpResponse.getHeaders().put(HttpHeader.Connection, "close");
+                }
+
+                sendResponse(socketWriter, socketOutputStream, httpResponse);
+                requestCount++;
             }
-
-            HttpResponse httpResponse;
-            try {
-                // parse the raw http request
-                HttpRequestParser httpRequestParser = new HttpRequestParser();
-                HttpRequest httpRequest = httpRequestParser.parse(statusLine, rawHeaders, socketReader);
-
-                // Debug
-                System.out.println("Received: " + httpRequest.getVerb() + " " + httpRequest.getResource());
-
-                // Use custom router to handle requests.
-                httpResponse = this.router.route(httpRequest);
-            } catch (InvalidHttpRequestException e) {
-                // Debug
-                System.out.println("400_BAD_REQUEST. Failed to parse HTTP request: " + e.getMessage());
-
-                // Since parsing is failed, send a 400 BAD REQUEST response.
-                String responseBody = e.getMessage();
-                httpResponse = new HttpResponse.Builder(HttpStatus.BAD_REQUEST_400)
-                        .header(HttpHeader.Content_Type, "text/plain")
-                        .header(HttpHeader.Content_Length, Integer.toString(responseBody.length()))
-                        .body(responseBody)
-                        .build();
-            }
-
-            sendResponse(socketWriter, socketOutputStream, httpResponse);
 
         } catch (IOException e) {
             System.out.println("Client disconnected due to I/O error. Client Info: " + clientSocket.getInetAddress());
