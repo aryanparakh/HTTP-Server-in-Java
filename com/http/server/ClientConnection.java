@@ -15,6 +15,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.util.HashMap;
 import java.util.Map;
 
 public class ClientConnection implements Runnable {
@@ -30,35 +31,30 @@ public class ClientConnection implements Runnable {
     @Override
     public void run() {
         try (
-            BufferedReader socketReader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-            OutputStream socketOutputStream = clientSocket.getOutputStream();
-            PrintWriter socketWriter = new PrintWriter(socketOutputStream, true);
-        ) {
-            StringBuilder requestBuilder = new StringBuilder();
-            String httpLine;
+                BufferedReader socketReader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                OutputStream socketOutputStream = clientSocket.getOutputStream();
+                PrintWriter socketWriter = new PrintWriter(socketOutputStream, true);) {
 
-            // Read status line and headers.
-            while ((httpLine = socketReader.readLine()) != null && !httpLine.isEmpty()) {
-                if (httpLine.isEmpty()) {
-                    break;
-                }
-
-                requestBuilder.append(httpLine).append(Delimiter.HttpRequestLineDelimiter.getDelimiterValue());
+            String statusLine = socketReader.readLine();
+            if (statusLine == null || statusLine.isEmpty()) {
+                System.out.println("Closing connection. Reason: no status line found.");
+                return;
             }
 
-            // Read body for request with specific HTTP verbs.
-            // ...
-            // No request, just close it.
-            String unparsedHttpRequest = requestBuilder.toString();
-            if (unparsedHttpRequest.isEmpty()) {
-                return;
+            Map<String, String> rawHeaders = new HashMap<>();
+            String headerLine;
+            while ((headerLine = socketReader.readLine()) != null && !headerLine.isEmpty()) {
+                String headerParts[] = headerLine.split(Delimiter.HttpHeaderDelimiter.getDelimiterValue(), 2);
+                if (headerParts.length == 2) {
+                    rawHeaders.put(headerParts[0], headerParts[1]);
+                }
             }
 
             HttpResponse httpResponse;
             try {
                 // parse the raw http request
                 HttpRequestParser httpRequestParser = new HttpRequestParser();
-                HttpRequest httpRequest = httpRequestParser.parse(unparsedHttpRequest);
+                HttpRequest httpRequest = httpRequestParser.parse(statusLine, rawHeaders, socketReader);
 
                 // Debug
                 System.out.println("Received: " + httpRequest.getVerb() + " " + httpRequest.getResource());
@@ -72,10 +68,10 @@ public class ClientConnection implements Runnable {
                 // Since parsing is failed, send a 400 BAD REQUEST response.
                 String responseBody = e.getMessage();
                 httpResponse = new HttpResponse.Builder(HttpStatus.BAD_REQUEST_400)
-                    .header(HttpHeader.Content_Type, "text/plain")
-                    .header(HttpHeader.Content_Length, Integer.toString(responseBody.length()))
-                    .body(responseBody)
-                    .build();
+                        .header(HttpHeader.Content_Type, "text/plain")
+                        .header(HttpHeader.Content_Length, Integer.toString(responseBody.length()))
+                        .body(responseBody)
+                        .build();
             }
 
             sendResponse(socketWriter, socketOutputStream, httpResponse);
@@ -94,11 +90,11 @@ public class ClientConnection implements Runnable {
     // Sending response to the underlying socket after serializing the response.
     private void sendResponse(PrintWriter writer, OutputStream outputStream, HttpResponse response) throws IOException {
         String serializedStatusLine = response.getHttpVersion() + " " + response.getStatus().getStatusCode() + " "
-            + response.getStatus().getStatusMessage();
+                + response.getStatus().getStatusMessage();
         writer.println(serializedStatusLine);
 
         for (Map.Entry<HttpHeader, String> header : response.getHeaders().entrySet()) {
-            String serializedHeaderValue = header.getKey().toString().toLowerCase() + ": " + header.getValue();
+            String serializedHeaderValue = header.getKey().getHeaderValue() + ": " + header.getValue();
             writer.println(serializedHeaderValue);
         }
 

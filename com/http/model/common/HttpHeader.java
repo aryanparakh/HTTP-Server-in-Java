@@ -29,6 +29,7 @@ public enum HttpHeader {
     Content_Type("Content-Type"),
     Content_Length("Content-Length"),
     Location("Location"),
+    Content_Disposition("Content-Disposition"),
 
     /* Common Headers */
     Connection("Connection");

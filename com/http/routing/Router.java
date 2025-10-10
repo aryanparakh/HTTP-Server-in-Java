@@ -16,6 +16,12 @@ public class Router {
     // Value: Handler Function
     private final Map<String, RouteHandler> routes = new HashMap<>();
 
+    private RouteHandler defaultGetHandler = null;
+
+    public void setDefaultGetHandler(RouteHandler handler) {
+        this.defaultGetHandler = handler;
+    }
+
     /**
      * Registers a handler for a specific HTTP Verb and a resource path.
      */
@@ -25,20 +31,26 @@ public class Router {
     }
 
     public HttpResponse route(HttpRequest request) {
+        HttpVerb verb = request.getVerb();
+        String resource = request.getResource();
         String routeKey = request.getVerb().toString() + " " + request.getResource();
         RouteHandler handler = routes.get(routeKey);
 
-        // If no handler exists for a route key, then send a 404 NOT FOUND response.
-        if (handler == null) {
-            System.out.println("No Route Handler found for route key: " + routeKey);
-
-            return new HttpResponse.Builder(HttpStatus.NOT_FOUND_404)
-                .header(HttpHeader.Content_Type, "text/plain")
-                .body("Invalid Route.")
-                .build();
+        if(handler != null) {
+            return handler.handle(request);
         }
 
-        return handler.handle(request);
+        if(verb == HttpVerb.GET && defaultGetHandler != null) {
+            return defaultGetHandler.handle(request);
+        }
+
+        if(verb == HttpVerb.GET) {
+            System.out.println("No Route Handler found for route key: " + routeKey);
+            return new HttpResponse.Builder(HttpStatus.NOT_FOUND_404).body("404 Not Found").build();
+        } else {
+            System.out.println("Unsupported method for resource: " + verb + " " + resource);
+            return new HttpResponse.Builder(HttpStatus.METHOD_NOT_ALLOWED_405).body("405 Method Not Allowed").build();
+        }
     }
 
 }

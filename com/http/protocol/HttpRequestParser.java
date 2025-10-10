@@ -5,99 +5,63 @@ import com.http.model.common.Delimiter;
 import com.http.model.common.HttpHeader;
 import com.http.model.request.HttpRequest;
 import com.http.model.request.HttpVerb;
+
+import java.io.BufferedReader;
+import java.io.IOError;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
 public class HttpRequestParser {
-    private HttpVerb verb;
-    private String resource;
-    private String httpVersion;
-    private Map<HttpHeader, String> headers;
-    private String body;
 
-    public HttpRequest parse(String httpRequest) throws InvalidHttpRequestException {
-        this.headers = new HashMap<>();
-
-        String[] httpRequestLines = httpRequest.split(Delimiter.HttpRequestLineDelimiter.getDelimiterValue());
-        String statusLine = httpRequestLines[0];
+    public HttpRequest parse(String statusLine, Map<String, String> rawHeaders, BufferedReader reader)
+            throws InvalidHttpRequestException, IOException {
         String[] statuses = statusLine.split(Delimiter.HttpRequestStatusDelimiter.getDelimiterValue());
-
-        // Parsing HTTP Verb.
-        switch (statuses[0]) {
-            case "GET" -> verb = HttpVerb.GET;
-            case "POST" -> verb = HttpVerb.POST;
-            case "PUT" -> verb = HttpVerb.PUT;
-            case "PATCH" -> verb = HttpVerb.PATCH;
-            case "DELETE" -> verb = HttpVerb.DELETE;
-            case "HEAD" -> verb = HttpVerb.HEAD;
-            case "OPTIONS" -> verb = HttpVerb.OPTIONS;
-            default -> throw new IllegalArgumentException("Invalid HTTP verb: " + statuses[0]);
+        if (statuses.length != 3) {
+            throw new InvalidHttpRequestException(
+                    "Status line should have exactly 3 parts. Status Line: " + statusLine);
         }
 
-        // Parsing HTTP Resource.
-        this.resource = statuses[1];
+        HttpVerb verb;
+        try {
+            verb = HttpVerb.valueOf(statuses[0]);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidHttpRequestException("Invalid HTTP Verb. Verb: " + statuses[0]);
+        }
 
-        // Parsing HTTP Version.
-        this.httpVersion = statuses[2];
+        // Parsing HTTP Resource and Version.
+        String resource = statuses[1];
+        String httpVersion = statuses[2];
+
+        Map<HttpHeader, String> headers = new HashMap<>();
+        for (Map.Entry<String, String> entry : rawHeaders.entrySet()) {
+            try {
+                HttpHeader header = HttpHeader.valueOf(entry.getKey().replace('-', '_'));
+                headers.put(header, entry.getValue());
+            } catch (IllegalArgumentException e) {
+                System.out.println("Ignoring Unknown Header: Key: " + entry.getKey() + " | Value: " + entry.getValue());
+            }
+        }
 
         boolean containsBody = verb == HttpVerb.POST || verb == HttpVerb.PUT || verb == HttpVerb.PATCH;
-        int idxOfEmptyLineBetweenHeadersAndBody = -1;
+        String body = null;
 
         if (containsBody) {
-            // Find index of line separating headers and body.
-            for (int i = 1; i < httpRequestLines.length; i++) {
-                if (httpRequestLines[i].trim()
-                    .equalsIgnoreCase(Delimiter.HttpRequestLineDelimiter.getDelimiterValue())) {
-                    idxOfEmptyLineBetweenHeadersAndBody = i;
-                    break;
-                }
+            if (!headers.containsKey(HttpHeader.Content_Length)) {
+                throw new InvalidHttpRequestException("Missing Content-Length header for the request with body.");
             }
 
-            if (idxOfEmptyLineBetweenHeadersAndBody == -1) {
-                throw new InvalidHttpRequestException("No valid separator between headers and body.");
+            int contentLength = Integer.parseInt(headers.get(HttpHeader.Content_Length));
+
+            char bodyChars[] = new char[contentLength];
+            int bytesRead = reader.read(bodyChars, 0, contentLength);
+            if (bytesRead < contentLength) {
+                throw new IOException("Mismatch in content length and actual body size.");
             }
 
-            // Parsing the HTTP body.
-            for (int i = idxOfEmptyLineBetweenHeadersAndBody; i < httpRequestLines.length; i++) {
-                body += httpRequestLines[i];
-            }
-        } else {
-            idxOfEmptyLineBetweenHeadersAndBody = httpRequestLines.length;
+            body = new String(bodyChars);
         }
 
-        // Headers lie in the range [1, idx-1]
-        for (int i = 1; i < idxOfEmptyLineBetweenHeadersAndBody; i++) {
-            String[] unparsedHeader = httpRequestLines[i].split(Delimiter.HttpHeaderDelimiter.getDelimiterValue());
-            HttpHeader header;
-            String headerValue;
-
-            // Parsing each request header
-            switch (unparsedHeader[0]) {
-                case "Host" -> header = HttpHeader.Host;
-                case "User-Agent" -> header = HttpHeader.User_Agent;
-                case "Accept" -> header = HttpHeader.Accept;
-                case "Accept-Language" -> header = HttpHeader.Accept_Language;
-                case "Accept-Encoding" -> header = HttpHeader.Accept_Encoding;
-                case "Content-Encoding" -> header = HttpHeader.Content_Encoding;
-                case "Server" -> header = HttpHeader.Server;
-                case "Date" -> header = HttpHeader.Date;
-                case "Content-Type" -> header = HttpHeader.Content_Type;
-                case "Content-Length" -> header = HttpHeader.Content_Length;
-                case "Location" -> header = HttpHeader.Location;
-                case "Connection" -> header = HttpHeader.Connection;
-                default -> header = null;
-                // default -> throw new InvalidHttpRequestException("Invalid HTTP header: " + unparsedHeader[0]);
-            }
-
-            if(header == null) continue;
-
-            // Parsing each header value.
-            headerValue = unparsedHeader[1].trim();
-
-            headers.put(header, headerValue);
-        }
-
-        HttpRequest parsedHttpRequest = new HttpRequest(verb, resource, httpVersion, headers, body);
-        return parsedHttpRequest;
+        return new HttpRequest(verb, resource, httpVersion, headers, body);
     }
 }
