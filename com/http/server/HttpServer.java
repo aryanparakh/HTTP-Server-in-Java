@@ -1,28 +1,40 @@
 package com.http.server;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.UnknownHostException;
 
 import com.http.routing.Router;
 
 public class HttpServer {
 
-    private final int port;
+    private final int PORT;
     private final Router router;
+    private final String HOST;
 
-    public HttpServer(int port, Router router) {
-        this.port = port;
+    public HttpServer(int PORT, String HOST, Router router) {
+        this.PORT = PORT;
+        this.HOST = HOST;
         this.router = router;
     }
 
     public void start() {
         System.out.println("Server about to start...");
 
+        int backlog = 50;
+        InetAddress serverBindAddress = null;
+        try {
+            serverBindAddress = InetAddress.getByName(this.HOST);
+        } catch (UnknownHostException e) {
+            System.out.println("No Host found for the provided Host address. " + e.getMessage());
+            System.exit(1);
+        }
+
         try (
-            ServerSocket serverSocket = new ServerSocket(this.port)
-        ) {
-            System.out.println("Server now listening for clients on port = " + this.port);
+                ServerSocket serverSocket = new ServerSocket(this.PORT, backlog, serverBindAddress);) {
+            System.out.println("Server now listening for clients on: " + this.HOST + ":" + this.PORT);
 
             while (true) {
                 // Receive from Socket object after client connection.
