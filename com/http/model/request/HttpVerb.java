@@ -1,6 +1,10 @@
 package com.http.model.request;
 
-public enum HttpVerb {
+/**
+ * Enumeration of HTTP methods supported by the server
+ */
+public enum HttpVerb 
+{
     GET,
     POST,
     PUT,
