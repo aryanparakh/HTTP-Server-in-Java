@@ -235,6 +235,3 @@ git push origin feature/your-feature
 6. Open a Pull Request.
 
 ---
-
-## License
-This project is **open-source** and free to use under the **MIT License**.
